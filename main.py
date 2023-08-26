@@ -7,27 +7,25 @@ import threading
 from collections import deque
 import csv
 
-# Command for Arduino
-pump_command = "P:"  # Command for the roller pump
+# Commande pour Arduino
+pump_command = "P:"  # Commande pour la pompe péristaltique
 
 
 class SerialReader(threading.Thread):
-    def __init__(self):
+    def __init__(self, port='/dev/cu.usbmodem14301'):
         super().__init__()
         self.serial = None
         self.datas = deque(maxlen=10)
         self.is_running = False
+        self.port = port
 
     def initialize_serial(self):
-        # Default port for Arduino
-        port = '/dev/cu.usbmodem14301'
-
         try:
-            self.serial = serial.Serial(port, 9600, timeout=1)
+            self.serial = serial.Serial(self.port, 9600, timeout=1)
             time.sleep(2)
-            print("Serial connection established on port:", port)
+            print("Connexion série établie sur le port :", self.port)
         except serial.SerialException as e:
-            print("Failed to initialize serial connection:", str(e))
+            print("Échec de l'initialisation de la connexion série :", str(e))
 
     def run(self):
         self.is_running = True
@@ -46,13 +44,41 @@ class SerialReader(threading.Thread):
                 self.serial.reset_input_buffer()
                 self.datas.append(data)
             except serial.SerialException as e:
-                print("Failed to read serial data:", str(e))
+                print("Échec de la lecture des données série :", str(e))
 
     def return_last_data(self):
         if self.datas:
             return self.datas[-1]
         else:
             return None
+
+
+class Pump:
+    def __init__(self, serial, speed=0, status=False, mode="controller"):
+        self.serial = serial
+        self.speed = speed
+        self.status = status
+        self.mode = mode
+
+    def set_speed(self, speed):
+        self.speed = speed
+        # Envoyer la commande d'ajustement de la vitesse à la pompe via le port série
+
+    def set_status(self, status):
+        self.status = status
+        # Envoyer la commande d'allumage/arrêt à la pompe via le port série
+
+    def set_mode(self, mode):
+        self.mode = mode
+
+    def get_speed(self):
+        return self.speed
+
+    def get_status(self):
+        return self.status
+
+    def get_mode(self):
+        return self.mode
 
 
 class Sensor(threading.Thread):
@@ -64,11 +90,11 @@ class Sensor(threading.Thread):
         self.isFull = False
         self.input = serial_input
         self.rank = rank
-        self.lock = threading.Lock()  # Lock for accessing sensor data
+        self.lock = threading.Lock()  # Verrou pour accéder aux données du capteur
         self.is_running = False
-        self.start_time = time.time()  # Start time
-        self.y_min = y_min  # Minimum value for Y-axis range
-        self.y_max = y_max  # Maximum value for Y-axis range
+        self.start_time = time.time()  # Heure de début
+        self.y_min = y_min  # Valeur minimale pour la plage de l'axe Y
+        self.y_max = y_max  # Valeur maximale pour la plage de l'axe Y
 
     def run(self):
         self.is_running = True
@@ -82,11 +108,11 @@ class Sensor(threading.Thread):
     def update_data(self):
         last_data = self.input.return_last_data()
         if last_data is not None:
-            value = float(last_data[self.rank])  # Convert the value to float
+            value = float(last_data[self.rank])  # Convertir la valeur en float
             if value is not None:
                 self.add_data(value)
 
-                # Check Y-axis value range
+                # Vérifier la plage de valeur de l'axe Y
                 if self.y_min is not None and value < self.y_min:
                     self.y_min = value
                 if self.y_max is not None and value > self.y_max:
@@ -101,15 +127,6 @@ class Sensor(threading.Thread):
     def clear_data(self):
         with self.lock:
             self.data.clear()
-
-    def start_sensing(self):
-        if not self.is_running:
-            self.start()
-
-    def stop_sensing(self):
-        if self.is_running:
-            self.stop()
-
 
 class GUI:
     def __init__(self):
@@ -129,7 +146,7 @@ class GUI:
         self.close_button = tk.Button(self.window, text="Close", command=self.close_gui)
         self.close_button.pack(side=tk.LEFT, padx=10, pady=10)
 
-        # Call start_sensing() to start sensing immediately
+        # Appeler start_sensing() pour commencer la surveillance immédiatement
         self.start_sensing()
 
     def add_sensor(self, sensor):
@@ -154,7 +171,7 @@ class GUI:
             sensor.subplot.set_xlabel('Time')
             sensor.subplot.set_ylabel(sensor.unit)
 
-            # Set Y-axis range
+            # Définir la plage de valeur de l'axe Y
             if sensor.y_min is not None and sensor.y_max is not None:
                 sensor.subplot.set_ylim(sensor.y_min, sensor.y_max)
 
@@ -164,7 +181,7 @@ class GUI:
 
     def start_sensing(self):
         for sensor in self.sensors:
-            sensor.start_sensing()
+            sensor.start()
 
     def start_perfusion(self):
         for sensor in self.sensors:
@@ -174,7 +191,7 @@ class GUI:
 
     def stop_perfusion(self):
         for sensor in self.sensors:
-            sensor.stop_sensing()
+            sensor.stop()
 
         self.start_button.configure(text="Start Perfusion", state=tk.NORMAL)
 
@@ -200,11 +217,11 @@ class GUI:
     def close_gui(self):
         for sensor in self.sensors:
             sensor.stop_sensing()
-        arduino1.stop()  # Stop the SerialReader thread
+        arduino1.stop()  # Arrêter le thread SerialReader
         self.window.destroy()
 
     def run_gui(self):
-        self.start_sensing()  # Start the threads from the beginning
+        self.start_sensing()  # Démarrer les threads dès le début
         self.update_plots()
         self.window.mainloop()
 
