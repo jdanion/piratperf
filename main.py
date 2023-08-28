@@ -5,13 +5,16 @@ import csv
 import time
 import collections
 import datetime
+from random import randint
 from typing import List, Dict, Callable, Any
-
+from matplotlib.ticker import FuncFormatter
+import inspect
 import matplotlib.pyplot as plt
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (
     QApplication,
     QMainWindow,
+    QToolBox,
     QVBoxLayout,
     QPushButton,
     QWidget,
@@ -66,6 +69,8 @@ class DeviceManager:
 
 
 
+
+
 class SerialInterface:
     def __init__(self, port, name, baud_rate=9600, data_length=1):
         self.port = port
@@ -75,6 +80,7 @@ class SerialInterface:
         self.is_running = False
         self.data_length = data_length
         self.thread = None
+
 
         try:
             self.serial = serial.Serial(self.port, self.baud_rate, timeout=1)
@@ -133,6 +139,7 @@ class SerialInterface:
             return
 
         try:
+            print(data)
             self.serial.write(data)
         except Exception as e:
             logging.error(f"Error writing data to {self.port}: {e}")
@@ -207,6 +214,110 @@ class SerialSensor(Sensor):
     def clear_data(self):
         super().clear_data()
 
+class PressureSensor(SerialSensor):
+    def __init__(self, name, unit, device, data_column, y_min=None, y_max=None, color="b", y_range=None):
+        super().__init__(name=name, unit=unit, device=device, data_column=data_column, y_min=y_min, y_max=y_max, color=color, y_range=y_range)
+        self.sensor_type = "pressure"
+
+        self.offset = 0
+        self.scale = 1
+
+    def tare(self):
+        data = "2,t," + str(randint(0, 100))  # 't' est une chaîne de caractères et chr(value) convertit la valeur en caractère
+        self.device.write_data(data.encode())
+
+    tare.button_label = "Tare"
+    def calibrate(self):
+       data = "2,c," + str(randint(0, 100))
+       self.device.write_data(data.encode())
+
+    calibrate.button_label = "Calibrate"
+
+    def add_data(self, data):
+        super().add_data(data)
+
+
+class FlowSensor(SerialSensor):
+
+    def __init__(self, name, unit, device, data_column, y_min=None, y_max=None, color="b", y_range=None):
+        super().__init__(name=name, unit=unit, device=device, data_column=data_column, y_min=y_min, y_max=y_max, color=color, y_range=y_range)
+        self.sensor_type = "flow"
+
+    def add_data(self, data):
+        super().add_data(data)
+
+
+class TemperatureSensor(SerialSensor):
+
+        def __init__(self, name, unit, device, data_column, y_min=None, y_max=None, color="b", y_range=None):
+            super().__init__(name=name, unit="°C", device=device, data_column=data_column, y_min=y_min, y_max=y_max, color=color, y_range=y_range)
+            self.sensor_type = "temperature"
+
+class OxySensor(SerialSensor):
+
+        def __init__(self, name, unit, device, data_column, y_min=None, y_max=None, color="b", y_range=None):
+            super().__init__(name=name, unit="%", device=device, data_column=data_column, y_min=y_min, y_max=y_max, color=color, y_range=y_range)
+            self.sensor_type = "oxygen"
+
+        def add_data(self, data):
+            super().add_data(data)
+
+class PhSensor(SerialSensor):
+
+            def __init__(self, name, unit, device, data_column, y_min=None, y_max=None, color="b", y_range=None):
+                super().__init__(name=name, unit="pH", device=device, data_column=data_column, y_min=y_min, y_max=y_max, color=color, y_range=y_range)
+                self.sensor_type = "ph"
+
+class Pump(SerialSensor):
+
+            def __init__(self, name, unit, device, data_column, y_min=None, y_max=None, color="b", y_range=None):
+                super().__init__(name=name, unit="RPM", device=device, data_column=data_column, y_min=y_min, y_max=y_max, color=color, y_range=y_range)
+                self.sensor_type = "pump"
+                self.control_mode = False
+                self.speed = 0
+                self.control_target = 0
+                self.control_sensor = None
+                self.is_running = False
+            def run(self):
+                self.is_running = True
+                data = "1,r,100"
+                self.device.write_data(data.encode())
+
+            run.button_label = "Run Pump"
+            def stop(self):
+                self.is_running = False
+                data = "1,s,0"
+                self.device.write_data(data.encode())
+
+            stop.button_label = "Stop Pump"
+            def set_speed(self, speed):
+                self.control_mode = False
+                data = "1,r,"+str(speed)
+                self.device.write_data(data.encode())
+
+            set_speed.button_label = "Set Speed"
+
+            def control_mode(self):
+                self.control_mode = True
+                data = "1c0"
+                self.device.write_data(data.encode())
+
+            control_mode.button_label = "Control Mode"
+
+class WeightSensor(SerialSensor):
+
+            def __init__(self, name, unit, device, data_column, y_min=None, y_max=None, color="b", y_range=None):
+                super().__init__(name=name, unit="g", device=device, data_column=data_column, y_min=y_min, y_max=y_max, color=color, y_range=y_range)
+                self.sensor_type = "weight"
+
+class Valve(SerialSensor):
+
+            def __init__(self, name, unit, device, data_column, y_min=None, y_max=None, color="b", y_range=None):
+                super().__init__(name=name, unit="°", device=device, data_column=data_column, y_min=y_min, y_max=y_max, color=color, y_range=y_range)
+                self.sensor_type = "valve"
+
+
+
 
 class ManualSensor(Sensor):
     def __init__(
@@ -228,6 +339,10 @@ class ManualSensor(Sensor):
 
     def clear_data(self):
         super().clear_data()
+
+    def add_data(self, timestamp):
+        data = timestamp, self.current_value
+        super().add_data(data)
 
 
 
@@ -261,6 +376,9 @@ class VirtualSensor(Sensor):
         flow_data = self.related_sensors[1].get_plot_data()
 
         return self.compute_function(pressure_data, flow_data)
+    def add_data(self, timestamp):
+        data = timestamp, self.read_data()
+        super().add_data(data)
 
     def clear_data(self):
         super().clear_data()
@@ -400,33 +518,29 @@ class Perfusion:
                         continue
                     if data is not None:
                         for sensor in self.sensors:
-                            if (
-                                sensor.sensor_type == "serial"
-                                and sensor.device == device_name
-                            ):
-                                sensor.add_data((timestamp, data[sensor.data_column]))
+                            if hasattr(sensor, 'device') and sensor.device == device:
+                                value = data[sensor.data_column]
+                                sensor.add_data((timestamp, value))
+                            else :
+                                sensor.add_data(timestamp)
 
-                # Add data for virtual and manual sensors
-                for sensor in self.sensors:
-                    if sensor.sensor_type == "virtual":
-                        # For virtual sensors, calculate the data based on other sensor data
-                        data = sensor.read_data()
-                        sensor.add_data((timestamp, data))
-                    elif sensor.sensor_type == "manual":
-                        # For manual sensors, use the current value set by the user
-                        data = sensor.get_value()
-                        sensor.add_data((timestamp, data))
+
 
                     # Calculate and store average every second
                 current_time = time.perf_counter()
                 if current_time - last_avg_time >= 1:
                     avg_data = [timestamp]
                     for sensor in self.sensors:
+
                         if sensor.data:
+
                             timestamps, values = zip(*sensor.data)
-                            if sum(values):
-                                avg_data.append(sum(values) / len(values))
-                    self.normalized_data.append(avg_data)
+                            if values:
+                                cleaned_values = [x for x in values if x is not None]  # Supprime les valeurs None
+                                if cleaned_values:  # Continue seulement si la liste nettoyée n'est pas vide
+                                    avg_data.append(sum(cleaned_values) / len(cleaned_values))
+                    if avg_data:
+                        self.normalized_data.append(avg_data)
                     #print(self.normalized_data)
                     last_avg_time = current_time
 
@@ -453,41 +567,48 @@ class Perfusion:
 
 
     def record_data(self):
+        print("Starting data recording...")  # Debug message
         try:
-            with open(
-                self.csv_file, "w", newline=""
-            ) as file:  # Ouvre le fichier en mode écriture ('w')
+            with open(self.csv_file, "w", newline="") as file:
                 writer = csv.writer(file)
-                # Écrire les en-têtes de colonne si nécessaire
                 writer.writerow(
                     ["Timestamp", "Sensor1", "Sensor2", "Sensor3", "..."]
-                )  # Remplacez par les noms de vos capteurs
+                )  # Replace with your actual sensor names
+                print("CSV header written.")  # Debug message
+
+
+                print("Inside while loop.")  # Debug message
+
+                # Ensure self.normalized_data is a list of lists where each sublist contains time and sensor data
+                normalized_data_copy = list(self.normalized_data)
+                print(f"Normalized data: {normalized_data_copy}")  # Debug message
+
+                for data_row in normalized_data_copy:
+                    writer.writerow(data_row)
+
+                # Write events if needed
+                timestamp = time.perf_counter()
+                for event in self.events:
+                    writer.writerow([timestamp, "Event", event])
     
-                while not self.stop_event.is_set():
-                    # Assurez-vous que self.normalized_data est une liste de listes
-                    # où chaque sous-liste contient des données temporelles et des données de capteur
-                    normalized_data_copy = list(self.normalized_data)
-                    
-                    for data_row in normalized_data_copy:
-                        writer.writerow(data_row)
-    
-                    # Écrire des événements si nécessaire
-                    timestamp = time.perf_counter()
-                    for event in self.events:
-                        writer.writerow([timestamp, "Event", event])
-                print("Data saved to csv")
+            print("Data recording stopped.")  # Debug message
+            print("Data saved to csv")  # Debug message
         except Exception as e:
             print(f"Error recording data to {self.csv_file}: {e}")
+
 
     def continuous_record_data(self):
         self.auto_record = True
         while self.auto_record:
+            print("Starting data recording durint auto record")  # Debug message
             self.record_data()
+            print("Waiting for next recording...")
             time.sleep(self.record_frequency*60)
 
     def start_recording(self):
+        print("Starting auto data recording...")  # Debug message
         if self.recording_thread is None or not self.recording_thread.is_alive():
-            self.recording_thread = threading.Thread(target=self.continuous_record_data())
+            self.recording_thread = threading.Thread(target=self.continuous_record_data)
             self.recording_thread.start()
             print("Perfusion start_recording called")
             if self.gui:
@@ -544,29 +665,17 @@ class GUI(QMainWindow):
             figsize=(10, 5),
             constrained_layout=True,
         )
+        self.toolBox = QToolBox(self)
         self.layout = QVBoxLayout(self.main_widget)
         self.canvas = FigureCanvas(self.fig)
         self.layout.addWidget(self.canvas)
-        self.dock_widget = QDockWidget("Events", self)
+        self.dock_widget = QDockWidget("Controls", self)
+        self.dock_toolbox = QToolBox(self.dock_widget)
         self.addDockWidget(Qt.RightDockWidgetArea, self.dock_widget)
         self.dock_widget_contents = QWidget()
         self.dock_widget.setWidget(self.dock_widget_contents)
         self.dock_layout = QVBoxLayout(self.dock_widget_contents)
         self.dock_widget_contents.setLayout(self.dock_layout)
-
-        for sensor_group, ax in zip(self.perfusion.sensor_groups, self.axs):
-            for sensor in sensor_group:
-                ax.set_title(sensor.name, fontsize=10)  # Ajoute le titre au graphique
-                ax.set_ylabel(sensor.unit)  # Ajoute l'unité à l'axe y
-                if sensor.y_range is not None:
-                    ax.set_ylim(sensor.y_range)
-                if isinstance(sensor, ManualSensor):
-                    slider = QSlider(Qt.Horizontal, self)
-                    slider.setRange(sensor.min_value, sensor.max_value)
-                    slider.setValue(sensor.current_value)
-                    slider.valueChanged.connect(sensor.set_value)
-                    self.layout.addWidget(slider)
-
         self.message_board = QLabel(self)
         self.layout.addWidget(self.message_board)
 
@@ -588,36 +697,91 @@ class GUI(QMainWindow):
             dict(name="Start sensing", function=self.start_sensing, location="main", id="start_sensing"),
             dict(name="Stop sensing", function=self.stop_sensing, location="main", id="stop_sensing"),
             dict(name="Clear sensing", function=self.clear_sensing, location="main", id="clear_sensing"),
-            dict(name="Auto recording", function=self.perfusion.start_recording, location="dock", attribut="checkable", id="auto_recording"),
-            dict(name="Canulation", function=self.canulate, location="dock", id="canulate"),
-            dict(name="Calibration", function=self.calibrate, location="dock", id="calibrate"),
-            dict(name="Record", function=self.perfusion.record_data(), location="dock", id="record"),
+            dict(name="Auto recording", function=self.perfusion.start_recording, location="record", attribut="checkable", id="auto_recording"),
+            dict(name="Canulation", function=self.canulate, location="surgery", id="canulate"),
+            dict(name="Calibration", function=self.calibrate, location="calibration", id="calibrate"),
+            dict(name="Record", function=self.perfusion.record_data, location="record", id="record"),
             dict(name="Oxygenation", function=self.set_oxygen, location="dock", id="oxygenation")
             # ... (autres boutons) ...
         ]
         self.buttons_dict = {}
-
-        for button_data in self.buttons_data:
-            button = QPushButton(button_data["name"], self)
-            button.clicked.connect(button_data["function"])
-            if "attribut" in button_data and button_data["attribut"] == "checkable":
-                button.setCheckable(True)
-                button.setChecked(self.perfusion.auto_record)
-                button.toggled.connect(self.toggle_recording)
-
-            if button_data["location"] == "main":
-                self.layout.addWidget(button)
-            elif button_data["location"] == "dock":
-                self.dock_layout.addWidget(button)
-
-            # Storing button with its id
-            self.buttons_dict[button_data["id"]] = button
-
-# Ajouter cette ligne pour créer le bouton bascule
-
         self.update_timer = QTimer(self)
         self.update_timer.timeout.connect(self.update_plots)
         self.update_timer.start(1000)  # milliseconds
+
+        self.init_sensor_groups()
+        self.init_toolbox()
+        self.init_sensor_buttons()
+
+    def init_sensor_groups(self):
+
+        for sensor_group, ax in zip(self.perfusion.sensor_groups, self.axs):
+            for sensor in sensor_group:
+                ax.set_title(sensor.name, fontsize=10)  # Ajoute le titre au graphique
+                ax.set_ylabel(sensor.unit)  # Ajoute l'unité à l'axe y
+                if sensor.y_range is not None:
+                    ax.set_ylim(sensor.y_range)
+                if isinstance(sensor, ManualSensor):
+                    slider = QSlider(Qt.Horizontal, self)
+                    slider.setRange(sensor.min_value, sensor.max_value)
+                    slider.setValue(sensor.current_value)
+                    slider.valueChanged.connect(sensor.set_value)
+                    self.layout.addWidget(slider)
+
+
+    def init_toolbox(self):
+        self.toolBox = QToolBox(self.dock_widget_contents)
+        self.dock_layout.addWidget(self.toolBox)
+    
+        toolbox_panels = {}
+    
+        for button_data in self.buttons_data:
+            location = button_data.get("location", "main")
+    
+            if location == "main":
+                self.layout.addWidget(self.create_button(button_data))
+            else:
+                panel = toolbox_panels.get(location)
+                if panel is None:
+                    panel = QWidget()
+                    panel_layout = QVBoxLayout()
+                    panel.setLayout(panel_layout)
+                    toolbox_panels[location] = panel
+                    self.toolBox.addItem(
+                        panel, location
+                    )  # Chaque location différente devient un nouvel accordeon
+    
+                panel.layout().addWidget(self.create_button(button_data))
+    
+    def init_sensor_buttons(self):
+        for sensor_group in self.perfusion.sensor_groups:
+            for sensor in sensor_group:
+                accordion = QWidget()  # Crée un nouveau QWidget pour chaque capteur
+                layout = QVBoxLayout()
+        
+                for name, method in inspect.getmembers(sensor, predicate=inspect.ismethod):
+                    button_label = getattr(method, "button_label", None)
+                    if button_label:  # Si la méthode a un bouton associé
+                        button = QPushButton(button_label)
+                        button.clicked.connect(method)
+                        layout.addWidget(button)
+        
+                accordion.setLayout(layout)
+                self.dock_toolbox.addItem(accordion, sensor.name)
+        
+        self.dock_layout.addWidget(self.dock_toolbox)
+
+    def create_button(self, button_data):
+        button = QPushButton(button_data["name"], self)
+        button.clicked.connect(button_data["function"])
+    
+        if "attribut" in button_data and button_data["attribut"] == "checkable":
+            button.setCheckable(True)
+            button.setChecked(self.perfusion.auto_record)
+            button.toggled.connect(self.toggle_recording)
+    
+        self.buttons_dict[button_data["id"]] = button
+        return button
 
     def toggle_recording(self, checked):
         self.perfusion.auto_record = checked
@@ -647,15 +811,27 @@ class GUI(QMainWindow):
         self.perfusion.stop_sensing()
         self.update_timer.stop()
 
+
     def update_plots(self):
-        #print("Update plots called")  # Pour le débogage
-        for sensor, ax in zip(self.perfusion.sensors, self.axs):
+
+        def seconds_to_hhmmss(seconds):
+            hours, remainder = divmod(seconds, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            return f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}"
+
+        def format_func(value, tick_number):
+            return seconds_to_hhmmss(value)
+
+        for i, (sensor, ax) in enumerate(zip(self.perfusion.sensors, self.axs)):
             data = sensor.get_plot_data()
-            ax.clear()  # Efface les axes
-            if data:  # Check if data is not empty
+            ax.clear()
+            if data:
                 timestamps, values = zip(*data)
                 ax.plot(timestamps, values, color=sensor.color, label=sensor.name)
-                #ax.legend()  # Now it should work without warning
+    
+                # Personnaliser l'axe des x pour afficher le temps en format HH:MM:SS
+                if i == len(self.axs) - 1:  # Seulement pour la dernière sous-figure
+                    ax.xaxis.set_major_formatter(FuncFormatter(format_func))
             else:
                 ax.text(
                     0.5,
@@ -664,12 +840,20 @@ class GUI(QMainWindow):
                     horizontalalignment="center",
                     verticalalignment="center",
                     transform=ax.transAxes,
-                )  # Affiche "No Data" si les données sont vides
-            ax.set_title(sensor.name, fontsize=8)  # Ajoute le titre au graphique
-            ax.set_ylabel(sensor.unit, fontsize=8)  # Ajoute l'unité à l'axe y
+                )
+    
+            ax.set_title(sensor.name, fontsize=8)
+            ax.set_ylabel(sensor.unit, fontsize=8)
             if sensor.y_range is not None:
                 ax.set_ylim(sensor.y_range)
-
+    
+            # Masquer les étiquettes de l'axe des x pour toutes les sous-figures sauf la dernière
+            if i < len(self.axs) - 1:
+                ax.set_xticklabels([])
+                ax.set_xlabel("")
+        # Activer et définir les étiquettes de l'axe des x pour la dernière sous-figure
+        self.axs[-1].set_xlabel("Time (HH:MM:SS)")
+    
         self.fig.set_constrained_layout_pads()
         self.fig.canvas.draw_idle()
 
@@ -710,10 +894,6 @@ class GUI(QMainWindow):
         self.update_message_board("oxygen_set")
 
 
-
-
-
-
 %matplotlib qt
 
 app = QApplication([])
@@ -743,16 +923,16 @@ surgery.harvest_liver(10)
 perfusion = Perfusion(
     device_manager, sensing_frequency=4, record_frequency=1, csv_file="data.csv"
 )
-pump_seed_sensor = SerialSensor(
-    "Pump Speed", "rpm", "arduino1", 0, color="k", y_range=(0, 100)
+pump = Pump(
+    "Pump Speed", "rpm", arduino1, 0, color="k", y_range=(0, 100)
 )
-flow_rate_sensor = SerialSensor("Flow rate", "L/min", "arduino1", 1, color="r", y_range=(0, 40))
+flow_rate_sensor = FlowSensor(name="Flow rate", unit = "mL/min", device= arduino1, data_column=1, color="r", y_range=(0, 40))
 
-pressure_sensor = SerialSensor(
-    "Pressure arterial line", "mmHg", "arduino1", 3, color="g"
+pressure_sensor = PressureSensor(
+    "Pressure arterial line", "mmHg", arduino1, 3, color="g"
 )
-art_oxy_sensor = SerialSensor(
-    "Arterial oxygen saturation", "%", "arduino1", 2, color="y"
+art_oxy_sensor = OxySensor(
+    "Arterial oxygen saturation", "%", arduino1, 2, color="y"
 )
 
 
@@ -769,11 +949,13 @@ resistance_sensor = VirtualSensor(
 perfusion.add_sensor(flow_rate_sensor)
 perfusion.add_sensor(pressure_sensor)
 perfusion.add_sensor(art_oxy_sensor)
-perfusion.add_sensor(pump_seed_sensor)
+perfusion.add_sensor(pump)
 perfusion.add_sensor(oxygen_flow)
 perfusion.add_sensor(resistance_sensor)
 
 perfusion.add_organ(surgery.organs[0])
+
+# In[11]:
 
 perfusion.add_gui()
 perfusion.gui.show_gui()
@@ -816,4 +998,4 @@ perfusion.print_perfusion_status()
 # In[ ]:
 perfusion.record_data()
 # In[ ]:
-
+type(perfusion.sensors[0].device)
