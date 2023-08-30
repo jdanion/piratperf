@@ -4,7 +4,6 @@
 import csv
 import time
 import collections
-import datetime
 from random import randint
 from typing import List, Dict, Callable, Any
 from matplotlib.ticker import FuncFormatter
@@ -24,16 +23,11 @@ from PyQt5.QtWidgets import (
 )
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
-
+import time
 import serial
+import statistics
 import logging
 import threading
-
-
-
-# from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-# from matplotlib.animation import FuncAnimation
-# import serial.tools.list_ports
 
 
 
@@ -67,10 +61,6 @@ class DeviceManager:
                     print(f"Failed to reconnect to device {device_name}.")
 
 
-
-
-
-
 class SerialInterface:
     def __init__(self, port, name, baud_rate=9600, data_length=1):
         self.port = port
@@ -80,22 +70,30 @@ class SerialInterface:
         self.is_running = False
         self.data_length = data_length
         self.thread = None
+        self.serial_lock = threading.Lock()
 
+        self.init_serial()
 
+    def init_serial(self):
         try:
             self.serial = serial.Serial(self.port, self.baud_rate, timeout=1)
         except serial.SerialException as e:
             logging.error(f"Error opening serial port {self.port}: {e}")
             raise e
 
+    def read_raw_data(self):
+        data = [float(x) for x in self.serial.readline().decode().strip().split(",")]
+        return data
+
     def start(self):
         if not self.serial:
             logging.error(f"Serial port {self.port} is not open")
+            self.init_serial()
             return
-
         self.is_running = True
         self.thread = threading.Thread(target=self.run)
         self.thread.start()
+        self.serial_lock = threading.Lock()
 
     def run(self):
         while self.is_running:
@@ -109,40 +107,45 @@ class SerialInterface:
             self.thread.join()
 
     def read_serial_data(self):
+
         if not self.serial:
             logging.error(f"Serial port {self.port} is not open")
             print("error no serial")
+            self.init_serial()
+            print("Tried to re-initialize serial")
             return None
 
-        try:
-            data = [
-                float(x) for x in self.serial.readline().decode().strip().split(",")
-            ]
-            # print(data)
-        except Exception as e:
-            logging.error(f"Error reading serial data from {self.name}: {e}")
-            print("error reading serial")
-            return None
+        with self.serial_lock:
 
-        if len(data) != self.data_length:
-            logging.error(
-                f"Error: The number of data read ({len(data)}) is different from data_length ({self.data_length})."
-            )
-            return None
+            try:
+                data = [
+                    float(x) for x in self.serial.readline().decode().strip().split(",")
+                ]
+                time.sleep(0.02)  # Suspend execution for 50 ms
+            except Exception as e:
+                logging.error(f"Error reading serial data from {self.name}: {e}")
+                print(f"Exception while reading: {e}")
+                return None
 
-        logging.debug(data)
-        return data
+
+            if len(data) != self.data_length:
+                logging.error(
+                    f"Error: The number of data read ({len(data)}) is different from data_length ({self.data_length})."
+                )
+                return None
+
+            logging.debug(data)
+            return data
 
     def write_data(self, data):
         if not self.serial:
             logging.error(f"Serial port {self.port} is not open")
             return
-
-        try:
-            print(data)
-            self.serial.write(data)
-        except Exception as e:
-            logging.error(f"Error writing data to {self.port}: {e}")
+        with self.serial_lock:
+            try:
+                self.serial.write(data)
+            except Exception as e:
+                logging.error(f"Error writing data to {self.name}: {e}")
 
     def close(self):
         if self.serial:
@@ -165,6 +168,11 @@ class Sensor:
         self.sensor_type = None
         self.color = color
         self.y_range = y_range
+        self.is_working = True
+        self.mean_and_std = {
+            "last_values": {"mean": None, "std": None},
+            "all_values": {"mean": None, "std": None},
+        }
 
     def add_data(self, data):
         """Ajoute une donnée au capteur."""
@@ -181,6 +189,14 @@ class Sensor:
     def clear_data(self):
         self.data = collections.deque(maxlen=600)
 
+    def update_statistics(self):
+        """Mise à jour des statistiques pour les dernières valeurs."""
+        if self.data:
+            _, values = zip(*self.data)
+            self.mean_and_std["last_values"]["mean"] = statistics.mean(values)
+            self.mean_and_std["last_values"]["std"] = statistics.stdev(values)
+
+    update_statistics.button_label = "Update statistics"
 
 class SerialSensor(Sensor):
     def __init__(
@@ -435,7 +451,7 @@ class SurgicalProcedure:
         def get_incident(self):
             return self.incident
 
-        def use_animal(self, animal):
+        def add_animal(self, animal):
             self.animal = animal
 
         def harvest_liver(self, weight):
@@ -453,7 +469,6 @@ class SurgicalProcedure:
 
         def cooling_start(self):
             self.cooling_start_time = time.perf_counter()
-
 
 
 class Perfusion:
@@ -697,11 +712,11 @@ class GUI(QMainWindow):
             dict(name="Start sensing", function=self.start_sensing, location="main", id="start_sensing"),
             dict(name="Stop sensing", function=self.stop_sensing, location="main", id="stop_sensing"),
             dict(name="Clear sensing", function=self.clear_sensing, location="main", id="clear_sensing"),
-            dict(name="Auto recording", function=self.perfusion.start_recording, location="record", attribut="checkable", id="auto_recording"),
-            dict(name="Canulation", function=self.canulate, location="surgery", id="canulate"),
-            dict(name="Calibration", function=self.calibrate, location="calibration", id="calibrate"),
-            dict(name="Record", function=self.perfusion.record_data, location="record", id="record"),
-            dict(name="Oxygenation", function=self.set_oxygen, location="dock", id="oxygenation")
+            dict(name="Auto recording", function=self.perfusion.start_recording, location="Data", attribut="checkable", id="auto_recording"),
+            dict(name="Canulation", function=self.canulate, location="Surgery", id="canulate"),
+            dict(name="Calibration", function=self.calibrate, location="Circuit", id="calibrate"),
+            dict(name="Record", function=self.perfusion.record_data, location="Data", id="record"),
+            dict(name="Oxygenation", function=self.set_oxygen, location="Circuit", id="oxygenation")
             # ... (autres boutons) ...
         ]
         self.buttons_dict = {}
@@ -828,7 +843,20 @@ class GUI(QMainWindow):
             if data:
                 timestamps, values = zip(*data)
                 ax.plot(timestamps, values, color=sensor.color, label=sensor.name)
-    
+                if sensor.mean_and_std is not None:
+                    mean_value = sensor.mean_and_std["last_values"]["mean"]
+                    std_value = sensor.mean_and_std["last_values"]["std"]
+                    if mean_value is not None and std_value is not None:
+                        ax.axhline(y=mean_value, color='r', linestyle='--', label='Mean',linewidth=0.8)
+                        ax.axhline(y=mean_value+ std_value, color='g', linestyle='--', label='Mean + 1*STD', linewidth=0.8)
+                        ax.axhline(y=mean_value - std_value, color='g', linestyle='--', label='Mean - 1*STD', linewidth=0.8)
+                        ax.fill_between(
+                            timestamps,
+                            mean_value - std_value,
+                            mean_value + std_value,
+                            color=sensor.color,
+                            alpha=0.3,
+                        )
                 # Personnaliser l'axe des x pour afficher le temps en format HH:MM:SS
                 if i == len(self.axs) - 1:  # Seulement pour la dernière sous-figure
                     ax.xaxis.set_major_formatter(FuncFormatter(format_func))
@@ -908,7 +936,7 @@ surgery = SurgicalProcedure()
 
 rat = Animal("Lewis", 250, "M")
 
-surgery.use_animal(rat)
+surgery.add_animal(rat)
 
 surgery.start()
 
@@ -990,11 +1018,11 @@ perfusion.start()
 perfusion.stop_sensing()
 
 # In[ ]:
-perfusion.print_data()
+type(perfusion.device_manager.devices["arduino1"].serial_lock)
 
 # In[ ]:
-perfusion.print_perfusion_status()
 
+perfusion.device_manager.devices["arduino1"].init_serial()
 # In[ ]:
 perfusion.record_data()
 # In[ ]:
